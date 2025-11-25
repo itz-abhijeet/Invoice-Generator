@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invoice Generator - Property Tests</title>
+    <script src="https://cdn.jsdelivr.net/npm/fast-check@3.15.0/lib/bundle.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .test-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: #2c3e50;
+        }
+        h2 {
+            color: #34495e;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        .test-result {
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        .test-pass {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .test-fail {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .test-info {
+            background-color: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 10px 5px 10px 0;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        #test-output {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>Invoice Generator - Property-Based Tests</h1>
+        <p>This page runs property-based tests using fast-check to verify correctness properties.</p>
+        
+        <button onclick="runAllTests()">Run All Tests</button>
+        <button onclick="clearOutput()">Clear Output</button>
+        
+        <div id="test-output"></div>
+    </div>
+
+    <!-- Hidden DOM elements for testing -->
+    <div id="test-fixture" style="display: none;">
+        <table>
+            <tbody id="items-tbody"></tbody>
+        </table>
+        <input type="number" id="tax-rate" value="0">
+        <span id="preview-subtotal"></span>
+        <span id="preview-tax"></span>
+        <span id="preview-total"></span>
+    </div>
+
+    <script src="script.js"></script>
+    <script>
+        const output = document.getElementById('test-output');
+
+        function log(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `test-result test-${type}`;
+            div.textContent = message;
+            output.appendChild(div);
+        }
+
+        function clearOutput() {
+            output.innerHTML = '';
+        }
+
+        function resetTestFixture() {
+            const tbody = document.getElementById('items-tbody');
+            tbody.innerHTML = '';
+        }
+
+        // Feature: invoice-generator, Property 1: Item row addition increases count
+        // Validates: Requirements 2.3
+        function testItemRowAddition() {
+            log('Running Property 1: Item row addition increases count', 'info');
+            
+            try {
+                const property = fc.property(
+                    fc.integer({ min: 0, max: 20 }), // Initial row count
+                    (initialRowCount) => {
+                        // Setup: Reset and add initial rows
+                        resetTestFixture();
+                        const tbody = document.getElementById('items-tbody');
+                        
+                        for (let i = 0; i < initialRowCount; i++) {
+                            addItemRow();
+                        }
+                        
+                        const rowCountBefore = tbody.getElementsByTagName('tr').length;
+                        
+                        // Action: Add one more row
+                        addItemRow();
+                        
+                        const rowCountAfter = tbody.getElementsByTagName('tr').length;
+                        
+                        // Property: Row count should increase by exactly 1
+                        return rowCountAfter === rowCountBefore + 1;
+                    }
+                );
+
+                const result = fc.check(property, { numRuns: 100 });
+                
+                if (result.failed) {
+                    log(`❌ FAILED: Property 1 - Item row addition increases count\nCounterexample: ${JSON.stringify(result.counterexample)}`, 'fail');
+                    return false;
+                } else {
+                    log(`✅ PASSED: Property 1 - Item row addition increases count (100 runs)`, 'pass');
+                    return true;
+                }
+            } catch (error) {
+                log(`❌ ERROR in Property 1: ${error.message}\n${error.stack}`, 'fail');
+                return false;
+            }
+        }
+
+        // Feature: invoice-generator, Property 2: Calculation correctness
+        // Validates: Requirements 3.2, 3.3, 3.4
+        function testCalculationCorrectness() {
+            log('Running Property 2: Calculation correctness', 'info');
+            
+            try {
+                const property = fc.property(
+                    fc.array(
+                        fc.record({
+                            quantity: fc.float({ min: 0, max: 1000, noNaN: true }),
+                            price: fc.float({ min: 0, max: 10000, noNaN: true })
+                        }),
+                        { minLength: 1, maxLength: 10 }
+                    ),
+                    fc.float({ min: 0, max: 100, noNaN: true }), // Tax rate
+                    (items, taxRate) => {
+                        // Setup: Reset and create rows with test data
+                        resetTestFixture();
+                        const tbody = document.getElementById('items-tbody');
+                        const taxRateInput = document.getElementById('tax-rate');
+                        
+                        // Set tax rate
+                        taxRateInput.value = taxRate.toFixed(2);
+                        
+                        // Add rows and populate with test data
+                        let expectedSubtotal = 0;
+                        for (let i = 0; i < items.length; i++) {
+                            addItemRow();
+                            const row = tbody.getElementsByTagName('tr')[i];
+                            const quantityInput = row.querySelector('.item-quantity');
+                            const priceInput = row.querySelector('.item-price');
+                            
+                            quantityInput.value = items[i].quantity.toFixed(2);
+                            priceInput.value = items[i].price.toFixed(2);
+                            
+                            // Calculate expected line total
+                            const expectedLineTotal = items[i].quantity * items[i].price;
+                            expectedSubtotal += expectedLineTotal;
+                        }
+                        
+                        // Trigger calculation
+                        calculateTotals();
+                        
+                        // Calculate expected values
+                        const expectedTaxAmount = expectedSubtotal * (taxRate / 100);
+                        const expectedFinalTotal = expectedSubtotal + expectedTaxAmount;
+                        
+                        // Get actual values from preview
+                        const actualSubtotal = parseFloat(document.getElementById('preview-subtotal').textContent.replace('$', ''));
+                        const actualTax = parseFloat(document.getElementById('preview-tax').textContent.replace('$', ''));
+                        const actualTotal = parseFloat(document.getElementById('preview-total').textContent.replace('$', ''));
+                        
+                        // Verify line totals (Requirement 3.2)
+                        for (let i = 0; i < items.length; i++) {
+                            const row = tbody.getElementsByTagName('tr')[i];
+                            const lineTotalSpan = row.querySelector('.line-total-value');
+                            const actualLineTotal = parseFloat(lineTotalSpan.textContent.replace('$', ''));
+                            const expectedLineTotal = items[i].quantity * items[i].price;
+                            
+                            // Allow small floating point tolerance
+                            if (Math.abs(actualLineTotal - expectedLineTotal) > 0.01) {
+                                return false;
+                            }
+                        }
+                        
+                        // Verify subtotal (Requirement 3.2)
+                        if (Math.abs(actualSubtotal - expectedSubtotal) > 0.01) {
+                            return false;
+                        }
+                        
+                        // Verify tax amount (Requirement 3.3)
+                        if (Math.abs(actualTax - expectedTaxAmount) > 0.01) {
+                            return false;
+                        }
+                        
+                        // Verify final total (Requirement 3.4)
+                        if (Math.abs(actualTotal - expectedFinalTotal) > 0.01) {
+                            return false;
+                        }
+                        
+                        return true;
+                    }
+                );
+
+                const result = fc.check(property, { numRuns: 100 });
+                
+                if (result.failed) {
+                    log(`❌ FAILED: Property 2 - Calculation correctness\nCounterexample: ${JSON.stringify(result.counterexample)}`, 'fail');
+                    return false;
+                } else {
+                    log(`✅ PASSED: Property 2 - Calculation correctness (100 runs)`, 'pass');
+                    return true;
+                }
+            } catch (error) {
+                log(`❌ ERROR in Property 2: ${error.message}\n${error.stack}`, 'fail');
+                return false;
+            }
+        }
+
+        function runAllTests() {
+            clearOutput();
+            log('=== Starting Property-Based Tests ===', 'info');
+            log('Each test runs 100 iterations with random inputs\n', 'info');
+            
+            const results = [];
+            
+            // Run Property 1
+            results.push(testItemRowAddition());
+            
+            // Summary
+            log('\n=== Test Summary ===', 'info');
+            const passed = results.filter(r => r).length;
+            const total = results.length;
+            
+            if (passed === total) {
+                log(`✅ All ${total} property tests passed!`, 'pass');
+            } else {
+                log(`❌ ${total - passed} of ${total} property tests failed`, 'fail');
+            }
+        }
+
+        // Auto-run tests on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            log('Page loaded. Click "Run All Tests" to start testing.', 'info');
+        });
+    </script>
+</body>
+</html>
